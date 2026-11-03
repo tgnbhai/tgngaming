@@ -64,18 +64,21 @@ app.get('/', (req, res) => {
     res.send("TGN License Server is Running Live 24/7!");
 });
 
-// 1. Register API
+// 1. Register API (HWID optional/placeholder support)
 app.post('/api/register', async (req, res) => {
     const { email, password, hwid } = req.body;
-    if (!email || !password || !hwid) {
+    if (!email || !password) {
         return res.status(400).json({ success: false, message: "Missing required fields" });
     }
 
     try {
         const hashedPassword = await bcrypt.hash(password, 10);
+        // Website se register hone par agar HWID WEB_ hai ya null hai toh use accept karega
+        const clientHwid = hwid || null;
+
         const result = await pool.query(
             `INSERT INTO users (email, password, hwid) VALUES ($1, $2, $3) RETURNING id, email`,
-            [email.toLowerCase(), hashedPassword, hwid]
+            [email.toLowerCase(), hashedPassword, clientHwid]
         );
         const user = result.rows[0];
         const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET);
@@ -88,10 +91,10 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
-// 2. Login & Single-Device HWID Verification
+// 2. Login & Single-Device HWID Verification (Website Account Auto-Link to PC HWID)
 app.post('/api/login', async (req, res) => {
     const { email, password, hwid } = req.body;
-    if (!email || !password || !hwid) {
+    if (!email || !password) {
         return res.status(400).json({ success: false, message: "Missing fields" });
     }
 
@@ -107,15 +110,16 @@ app.post('/api/login', async (req, res) => {
             return res.status(400).json({ success: false, message: "Invalid password" });
         }
 
-        if (user.hwid && user.hwid !== hwid) {
+        // AGAR ACCOUNT WEBSITE SE BANA HO (WEB_...) YA NULL HO, TOH ASLI PC HWID LINK KAR DEIN
+        if (hwid && (!user.hwid || user.hwid.startsWith("WEB_"))) {
+            await pool.query(`UPDATE users SET hwid = $1 WHERE id = $2`, [hwid, user.id]);
+            user.hwid = hwid;
+        } else if (hwid && user.hwid && user.hwid !== hwid) {
+            // Agar pehle se kisi doosre real PC par locked hai
             return res.status(403).json({ 
                 success: false, 
                 message: "Ye account kisi doosre PC par registered hai. HWID mismatch!" 
             });
-        }
-
-        if (!user.hwid) {
-            await pool.query(`UPDATE users SET hwid = $1 WHERE id = $2`, [hwid, user.id]);
         }
 
         const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET);
@@ -140,7 +144,7 @@ app.post('/api/license-status', async (req, res) => {
         }
 
         const user = result.rows[0];
-        if (user.hwid !== hwid) {
+        if (user.hwid && user.hwid !== hwid) {
             return res.json({ is_premium: false, plan: "free", speed_limit_mb: 2, max_concurrent: 3 });
         }
 
@@ -259,17 +263,15 @@ app.post('/api/payment/webhook', async (req, res) => {
         const customerEmail = (payment.email || '').toLowerCase();
 
         try {
-            // Plan determine karna based on amount
             let plan = 'monthly';
             let expiryDate = new Date();
-            if (payment.amount >= 15000) { // ₹150 in paise
+            if (payment.amount >= 15000) {
                 plan = 'lifetime';
                 expiryDate.setDate(expiryDate.getDate() + 36500);
             } else {
                 expiryDate.setDate(expiryDate.getDate() + 30);
             }
 
-            // User ko Premium status dena via email ya order_id
             if (customerEmail) {
                 await pool.query(
                     `UPDATE users SET is_premium = TRUE, plan_type = $1, premium_expiry = $2 WHERE email = $3`,
