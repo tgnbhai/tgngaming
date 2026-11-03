@@ -8,7 +8,13 @@ const crypto = require('crypto');
 const cors = require('cors');
 
 const app = express();
-app.use(express.json());
+
+// Webhook ke liye raw body capture karna zaroori hai
+app.use(express.json({
+    verify: (req, res, buf) => {
+        req.rawBody = buf;
+    }
+}));
 app.use(cors());
 
 // Supabase PostgreSQL Pool
@@ -139,7 +145,6 @@ app.post('/api/license-status', async (req, res) => {
         }
 
         if (user.is_premium) {
-            // Agar plan monthly hai aur 30 din nikal chuke hain -> revert to free
             if (user.plan_type !== 'lifetime' && new Date(user.premium_expiry) < new Date()) {
                 await pool.query(`UPDATE users SET is_premium = FALSE, plan_type = 'free' WHERE id = $1`, [user.id]);
                 return res.json({ is_premium: false, plan: "free", speed_limit_mb: 2, max_concurrent: 3 });
@@ -209,9 +214,9 @@ app.post('/api/verify-payment', async (req, res) => {
 
         let expiryDate = new Date();
         if (plan === 'monthly') {
-            expiryDate.setDate(expiryDate.getDate() + 30); // 30 Days Expiry Set
+            expiryDate.setDate(expiryDate.getDate() + 30);
         } else if (plan === 'lifetime') {
-            expiryDate.setDate(expiryDate.getDate() + 36500); // 100 Years
+            expiryDate.setDate(expiryDate.getDate() + 36500);
         }
 
         await pool.query(
@@ -230,58 +235,63 @@ app.post('/api/verify-payment', async (req, res) => {
     }
 });
 
-// Hosted Browser Checkout View
-app.get('/checkout', (req, res) => {
-    const { order_id, plan, token } = req.query;
-    res.send(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>TGN Downloader Payment</title>
-        </head>
-        <body style="background:#0f172a;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;font-family:sans-serif;">
-            <div style="text-align:center;background:#1e293b;padding:36px;border-radius:12px;border:1px solid #334155;max-width:380px;width:90%;">
-                <h2 style="margin:0 0 8px 0;color:#38bdf8;">TGN Downloader Pro</h2>
-                <p style="color:#94a3b8;margin-bottom:24px;">Upgrade Plan: <b>${(plan || '').toUpperCase()}</b></p>
-                <button id="payBtn" style="width:100%;padding:14px;background:#38bdf8;color:#0f172a;font-weight:bold;border:none;border-radius:8px;font-size:16px;cursor:pointer;">Proceed to Pay</button>
-            </div>
-            <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
-            <script>
-                document.getElementById('payBtn').onclick = function() {
-                    var options = {
-                        "key": "${process.env.RAZORPAY_KEY_ID}",
-                        "order_id": "${order_id}",
-                        "name": "TGN Downloader",
-                        "description": "${plan} License",
-                        "handler": function (response){
-                            fetch('/api/verify-payment', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                    token: "${token}",
-                                    plan: "${plan}",
-                                    razorpay_order_id: response.razorpay_order_id,
-                                    razorpay_payment_id: response.razorpay_payment_id,
-                                    razorpay_signature: response.razorpay_signature
-                                })
-                            }).then(r => r.json()).then(data => {
-                                alert(data.message);
-                                window.close();
-                            });
-                        }
-                    };
-                    var rzp = new Razorpay(options);
-                    rzp.open();
-                }
-                window.onload = () => document.getElementById('payBtn').click();
-            </script>
-        </body>
-        </html>
-    `);
+// 6. Razorpay Webhook Endpoint (Automatic Background Activation)
+app.post('/api/payment/webhook', async (req, res) => {
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+    const signature = req.headers['x-razorpay-signature'];
+
+    if (webhookSecret && signature) {
+        const expectedSignature = crypto
+            .createHmac('sha256', webhookSecret)
+            .update(req.rawBody)
+            .digest('hex');
+
+        if (expectedSignature !== signature) {
+            return res.status(400).json({ status: 'invalid signature' });
+        }
+    }
+
+    const event = req.body.event;
+
+    if (event === 'payment.captured' || event === 'order.paid') {
+        const payment = req.body.payload.payment.entity;
+        const orderId = payment.order_id;
+        const customerEmail = (payment.email || '').toLowerCase();
+
+        try {
+            // Plan determine karna based on amount
+            let plan = 'monthly';
+            let expiryDate = new Date();
+            if (payment.amount >= 15000) { // ₹150 in paise
+                plan = 'lifetime';
+                expiryDate.setDate(expiryDate.getDate() + 36500);
+            } else {
+                expiryDate.setDate(expiryDate.getDate() + 30);
+            }
+
+            // User ko Premium status dena via email ya order_id
+            if (customerEmail) {
+                await pool.query(
+                    `UPDATE users SET is_premium = TRUE, plan_type = $1, premium_expiry = $2 WHERE email = $3`,
+                    [plan, expiryDate.toISOString(), customerEmail]
+                );
+            }
+
+            if (orderId) {
+                await pool.query(
+                    `UPDATE orders SET payment_id = $1, status = 'paid' WHERE order_id = $2`,
+                    [payment.id, orderId]
+                );
+            }
+        } catch (dbErr) {
+            console.error("Webhook DB Update Error:", dbErr);
+        }
+    }
+
+    res.json({ status: 'ok' });
 });
 
-// 6. Auto-Update Version Checker Endpoint
+// 7. Auto-Update Version Checker Endpoint
 app.get('/api/version', (req, res) => {
     res.json({
         version: "1.0.1",
