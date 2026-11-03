@@ -284,7 +284,7 @@ app.get('/checkout', (req, res) => {
 // 6. Auto-Update Version Checker Endpoint
 app.get('/api/version', (req, res) => {
     res.json({
-        version: "1.0.2",
+        version: "1.0.1",
         download_url: "https://drive.google.com/file/d/1xUPZyE810tua8qCBQfsLj70yE-1zguoT/view?usp=sharing",
         changelog: "First official release with Pro features & high-speed downloads."
     });
