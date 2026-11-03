@@ -119,7 +119,7 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// 3. License Status Check
+// 3. License Status Check (Auto-Expires 30 Days Monthly Plan)
 app.post('/api/license-status', async (req, res) => {
     const { token, hwid } = req.body;
     if (!token || !hwid) {
@@ -139,6 +139,7 @@ app.post('/api/license-status', async (req, res) => {
         }
 
         if (user.is_premium) {
+            // Agar plan monthly hai aur 30 din nikal chuke hain -> revert to free
             if (user.plan_type !== 'lifetime' && new Date(user.premium_expiry) < new Date()) {
                 await pool.query(`UPDATE users SET is_premium = FALSE, plan_type = 'free' WHERE id = $1`, [user.id]);
                 return res.json({ is_premium: false, plan: "free", speed_limit_mb: 2, max_concurrent: 3 });
@@ -208,9 +209,9 @@ app.post('/api/verify-payment', async (req, res) => {
 
         let expiryDate = new Date();
         if (plan === 'monthly') {
-            expiryDate.setDate(expiryDate.getDate() + 30);
+            expiryDate.setDate(expiryDate.getDate() + 30); // 30 Days Expiry Set
         } else if (plan === 'lifetime') {
-            expiryDate.setDate(expiryDate.getDate() + 36500);
+            expiryDate.setDate(expiryDate.getDate() + 36500); // 100 Years
         }
 
         await pool.query(
@@ -278,6 +279,15 @@ app.get('/checkout', (req, res) => {
         </body>
         </html>
     `);
+});
+
+// 6. Auto-Update Version Checker Endpoint
+app.get('/api/version', (req, res) => {
+    res.json({
+        version: "1.0.0",
+        download_url: "https://tgngaming.onrender.com/download/TGNDownloader.exe",
+        changelog: "First official release with Pro features & high-speed downloads."
+    });
 });
 
 const PORT = process.env.PORT || 5000;
