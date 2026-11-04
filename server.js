@@ -65,7 +65,7 @@ app.get('/', (req, res) => {
     res.send("TGN License Server is Running Live 24/7!");
 });
 
-// FIXED: /checkout route with Direct Razorpay Payment Gateway Integration
+// FIXED: /checkout route with Auto-Opening Razorpay Payment Gateway
 app.get('/checkout', (req, res) => {
     const { order_id, token, plan } = req.query;
     const key_id = process.env.RAZORPAY_KEY_ID || '';
@@ -92,10 +92,10 @@ app.get('/checkout', (req, res) => {
                 <h2>TGN PRO Checkout</h2>
                 <p>Selected Plan: <b>${plan ? plan.toUpperCase() : 'PRO'}</b></p>
                 <p>Amount: <b>₹${amount / 100}</b></p>
-                <button class="btn" id="pay-btn">Pay Now with Razorpay</button>
+                <button class="btn" id="pay-btn" onclick="openRazorpay()">Pay Now with Razorpay</button>
             </div>
             <script>
-                document.getElementById('pay-btn').onclick = function(e) {
+                function openRazorpay() {
                     var options = {
                         "key": "${key_id}",
                         "amount": "${amount}",
@@ -131,8 +131,12 @@ app.get('/checkout', (req, res) => {
                     };
                     var rzp1 = new Razorpay(options);
                     rzp1.open();
-                    e.preventDefault();
                 }
+
+                // Page load hote hi automatic payment gateway popup khul jayega
+                window.onload = function() {
+                    openRazorpay();
+                };
             </script>
         </body>
         </html>
