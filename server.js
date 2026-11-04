@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const cors = require('cors');
+const path = require('path'); // Path module import kiya gaya hai
 
 const app = express();
 
@@ -64,6 +65,39 @@ app.get('/', (req, res) => {
     res.send("TGN License Server is Running Live 24/7!");
 });
 
+// FIX: /checkout route add kiya gaya hai taaki software me "Cannot GET /checkout" error na aaye
+app.get('/checkout', (req, res) => {
+    const { order_id, token, plan } = req.query;
+    
+    // Aap yahan chahein toh apna checkout HTML page serve kar sakte hain ya redirect kar sakte hain
+    res.send(`
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <title>TGN Downloader - Secure Checkout</title>
+            <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+            <style>
+                body { background: #0F172A; color: #F8FAFC; font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+                .card { background: #1E293B; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); text-align: center; width: 350px; }
+                h2 { color: #38BDF8; margin-bottom: 10px; }
+                p { color: #94A3B8; font-size: 14px; margin-bottom: 20px; }
+                .btn { background: #38BDF8; color: #0F172A; border: none; padding: 12px 20px; font-weight: bold; border-radius: 8px; cursor: pointer; width: 100%; font-size: 16px; }
+                .btn:hover { background: #0ea5e9; }
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <h2>TGN PRO Checkout</h2>
+                <p>Selected Plan: <b>${plan ? plan.toUpperCase() : 'PRO'}</b></p>
+                <p>Order ID: <span style="font-size: 11px; color: #64748B;">${order_id || 'N/A'}</span></p>
+                <button class="btn" onclick="alert('Kripya software ke andar se payment initiate karein!')">Proceed to Secure Pay</button>
+            </div>
+        </body>
+        </html>
+    `);
+});
+
 // 1. Register API (HWID optional/placeholder support)
 app.post('/api/register', async (req, res) => {
     const { email, password, hwid } = req.body;
@@ -73,7 +107,6 @@ app.post('/api/register', async (req, res) => {
 
     try {
         const hashedPassword = await bcrypt.hash(password, 10);
-        // Website se register hone par agar HWID WEB_ hai ya null hai toh use accept karega
         const clientHwid = hwid || null;
 
         const result = await pool.query(
@@ -91,7 +124,7 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
-// 2. Login & Single-Device HWID Verification (Website Account Auto-Link to PC HWID)
+// 2. Login & Single-Device HWID Verification
 app.post('/api/login', async (req, res) => {
     const { email, password, hwid } = req.body;
     if (!email || !password) {
@@ -110,12 +143,10 @@ app.post('/api/login', async (req, res) => {
             return res.status(400).json({ success: false, message: "Invalid password" });
         }
 
-        // AGAR ACCOUNT WEBSITE SE BANA HO (WEB_...) YA NULL HO, TOH ASLI PC HWID LINK KAR DEIN
         if (hwid && (!user.hwid || user.hwid.startsWith("WEB_"))) {
             await pool.query(`UPDATE users SET hwid = $1 WHERE id = $2`, [hwid, user.id]);
             user.hwid = hwid;
         } else if (hwid && user.hwid && user.hwid !== hwid) {
-            // Agar pehle se kisi doosre real PC par locked hai
             return res.status(403).json({ 
                 success: false, 
                 message: "Ye account kisi doosre PC par registered hai. HWID mismatch!" 
@@ -129,7 +160,7 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// 3. License Status Check (Auto-Expires 30 Days Monthly Plan)
+// 3. License Status Check
 app.post('/api/license-status', async (req, res) => {
     const { token, hwid } = req.body;
     if (!token || !hwid) {
@@ -239,7 +270,7 @@ app.post('/api/verify-payment', async (req, res) => {
     }
 });
 
-// 6. Razorpay Webhook Endpoint (Automatic Background Activation)
+// 6. Razorpay Webhook Endpoint
 app.post('/api/payment/webhook', async (req, res) => {
     const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
     const signature = req.headers['x-razorpay-signature'];
