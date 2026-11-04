@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const cors = require('cors');
-const path = require('path'); // Path module import kiya gaya hai
+const path = require('path');
 
 const app = express();
 
@@ -65,11 +65,12 @@ app.get('/', (req, res) => {
     res.send("TGN License Server is Running Live 24/7!");
 });
 
-// FIX: /checkout route add kiya gaya hai taaki software me "Cannot GET /checkout" error na aaye
+// FIXED: /checkout route with Direct Razorpay Payment Gateway Integration
 app.get('/checkout', (req, res) => {
     const { order_id, token, plan } = req.query;
-    
-    // Aap yahan chahein toh apna checkout HTML page serve kar sakte hain ya redirect kar sakte hain
+    const key_id = process.env.RAZORPAY_KEY_ID || '';
+    const amount = plan === 'lifetime' ? 15000 : 5900;
+
     res.send(`
         <!DOCTYPE html>
         <html lang="en">
@@ -90,15 +91,55 @@ app.get('/checkout', (req, res) => {
             <div class="card">
                 <h2>TGN PRO Checkout</h2>
                 <p>Selected Plan: <b>${plan ? plan.toUpperCase() : 'PRO'}</b></p>
-                <p>Order ID: <span style="font-size: 11px; color: #64748B;">${order_id || 'N/A'}</span></p>
-                <button class="btn" onclick="alert('Kripya software ke andar se payment initiate karein!')">Proceed to Secure Pay</button>
+                <p>Amount: <b>₹${amount / 100}</b></p>
+                <button class="btn" id="pay-btn">Pay Now with Razorpay</button>
             </div>
+            <script>
+                document.getElementById('pay-btn').onclick = function(e) {
+                    var options = {
+                        "key": "${key_id}",
+                        "amount": "${amount}",
+                        "currency": "INR",
+                        "name": "TGN Downloader",
+                        "description": "TGN Pro License Activation",
+                        "order_id": "${order_id}",
+                        "handler": async function (response){
+                            try {
+                                const res = await fetch('/api/verify-payment', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        token: "${token}",
+                                        razorpay_order_id: response.razorpay_order_id,
+                                        razorpay_payment_id: response.razorpay_payment_id,
+                                        razorpay_signature: response.razorpay_signature,
+                                        plan: "${plan}"
+                                    })
+                                });
+                                const data = await res.json();
+                                if(data.success) {
+                                    alert("Payment Successful! Pro license activate ho gaya hai. Ab aap software me jaakar refresh dabayein.");
+                                    window.close();
+                                } else {
+                                    alert("Payment Verification Failed: " + data.message);
+                                }
+                            } catch(err) {
+                                alert("Server verification error ho gaya.");
+                            }
+                        },
+                        "theme": { "color": "#38BDF8" }
+                    };
+                    var rzp1 = new Razorpay(options);
+                    rzp1.open();
+                    e.preventDefault();
+                }
+            </script>
         </body>
         </html>
     `);
 });
 
-// 1. Register API (HWID optional/placeholder support)
+// 1. Register API
 app.post('/api/register', async (req, res) => {
     const { email, password, hwid } = req.body;
     if (!email || !password) {
