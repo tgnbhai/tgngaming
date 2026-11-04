@@ -65,7 +65,7 @@ app.get('/', (req, res) => {
     res.send("TGN License Server is Running Live 24/7!");
 });
 
-// FIXED: /checkout route with Auto-Opening Razorpay Payment Gateway
+// FIXED: /checkout route with Direct Auto-Opening Razorpay & Clean Window Close
 app.get('/checkout', (req, res) => {
     const { order_id, token, plan } = req.query;
     const key_id = process.env.RAZORPAY_KEY_ID || '';
@@ -80,20 +80,9 @@ app.get('/checkout', (req, res) => {
             <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
             <style>
                 body { background: #0F172A; color: #F8FAFC; font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-                .card { background: #1E293B; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); text-align: center; width: 350px; }
-                h2 { color: #38BDF8; margin-bottom: 10px; }
-                p { color: #94A3B8; font-size: 14px; margin-bottom: 20px; }
-                .btn { background: #38BDF8; color: #0F172A; border: none; padding: 12px 20px; font-weight: bold; border-radius: 8px; cursor: pointer; width: 100%; font-size: 16px; }
-                .btn:hover { background: #0ea5e9; }
             </style>
         </head>
         <body>
-            <div class="card">
-                <h2>TGN PRO Checkout</h2>
-                <p>Selected Plan: <b>${plan ? plan.toUpperCase() : 'PRO'}</b></p>
-                <p>Amount: <b>₹${amount / 100}</b></p>
-                <button class="btn" id="pay-btn" onclick="openRazorpay()">Pay Now with Razorpay</button>
-            </div>
             <script>
                 function openRazorpay() {
                     var options = {
@@ -122,9 +111,16 @@ app.get('/checkout', (req, res) => {
                                     window.close();
                                 } else {
                                     alert("Payment Verification Failed: " + data.message);
+                                    window.close();
                                 }
                             } catch(err) {
                                 alert("Server verification error ho gaya.");
+                                window.close();
+                            }
+                        },
+                        "modal": {
+                            "ondismiss": function(){
+                                window.close();
                             }
                         },
                         "theme": { "color": "#38BDF8" }
@@ -133,7 +129,6 @@ app.get('/checkout', (req, res) => {
                     rzp1.open();
                 }
 
-                // Page load hote hi automatic payment gateway popup khul jayega
                 window.onload = function() {
                     openRazorpay();
                 };
